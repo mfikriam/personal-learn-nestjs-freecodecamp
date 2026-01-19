@@ -1,12 +1,19 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
+import * as argon from 'argon2';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AuthDto } from './dto';
-import * as argon from 'argon2';
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
+import { ConfigService } from '@nestjs/config';
+import { access } from 'fs';
 
 @Injectable()
 export class AuthService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private jwt: JwtService,
+    private config: ConfigService,
+  ) {}
 
   async signup(dto: AuthDto) {
     // Generate the password hash
@@ -21,11 +28,8 @@ export class AuthService {
         },
       });
 
-      // Extract hash, and group everything else into 'userWithoutHash'
-      const { hash: _, ...userWithoutHash } = user;
-
-      // Return the saved user
-      return userWithoutHash;
+      // Send token
+      return this.signToken(user.id, user.email);
     } catch (error) {
       if (error instanceof PrismaClientKnownRequestError) {
         if (error.code === 'P2002') {
@@ -54,10 +58,27 @@ export class AuthService {
     // If password incorrect throw exception
     if (!pwMatches) throw new ForbiddenException('Credentials incorrect');
 
-    // Extract hash, and group everything else into 'userWithoutHash'
-    const { hash: _, ...userWithoutHash } = user;
+    // Send token
+    return this.signToken(user.id, user.email);
+  }
 
-    // Send back the user
-    return userWithoutHash;
+  async signToken(
+    userId: number,
+    email: string,
+  ): Promise<{ access_token: string }> {
+    const payload = {
+      sub: userId,
+      email,
+    };
+
+    const secret = this.config.get('JWT_SECRET');
+    const token = await this.jwt.signAsync(payload, {
+      expiresIn: '15m',
+      secret,
+    });
+
+    return {
+      access_token: token,
+    };
   }
 }
